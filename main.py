@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types
+
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters.command import Command, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 import psycopg2
@@ -28,10 +29,11 @@ TOKEN = os.getenv('TOKEN')
 PASSWORD = os.getenv('DB_PASSWORD')
 IDS = os.getenv('IDS').split(',')
 
-storage = MemoryStorage()
-bot = Bot(token=TOKEN, storage=storage)
+# storage = MemoryStorage()
+bot = Bot(token=TOKEN)  # Ваш токен
+dp = Dispatcher(storage=MemoryStorage())
 
-dp = Dispatcher()
+waiting_for_html = False
 
 def split_message(text, max_length=4096):
     return [text[i:i + max_length] for i in range(0, len(text), max_length)]
@@ -123,6 +125,39 @@ async def cmd_sql(message: types.Message):
                 # await message.answer(json.dumps(razeik, indent=4))
 
     else: await message.answer("Вы не админ")
+
+@dp.message(Command("add_news"))
+async def cmd_add_news(message: types.Message):
+    if str(message.from_user.id) in IDS:
+        global waiting_for_html
+        waiting_for_html = True
+        await message.reply("Отправьте файл HTML.")
+
+
+dp.message(F.content_type == types.ContentType.DOCUMENT)
+async def handle_document(message: types.Message):
+    global waiting_for_html
+    if waiting_for_html:
+        document = message.document
+        if document.mime_type == 'text/html':
+            # Получаем файл через get_file
+            file_info = await bot.get_file(document.file_id)
+
+            # Загружаем файл по URL
+            file_url = f'https://api.telegram.org/file/bot{bot.token}/{file_info.file_path}'
+            async with bot.session.get(file_url) as response:
+                if response.status == 200:
+                    content = await response.read()  # Читаем содержимое файла
+                    logging.info(content)  # вывод содержимого в консоль
+                    await message.reply("Файл успешно загружен и содержимое выведено в консоль.")
+                else:
+                    await message.reply("Не удалось загрузить файл.")
+
+        else:
+            await message.reply("Формат файла неправильный. Пожалуйста, отправьте HTML файл.")
+
+        waiting_for_html = False  # С
+
 
 async def main():
     await dp.start_polling(bot)
