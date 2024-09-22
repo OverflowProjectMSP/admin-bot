@@ -1,8 +1,8 @@
 import asyncio
-import logging
-
+import aiohttp
+import uuid
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters.command import Command, CommandObject
+from aiogram.filters.command import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 import psycopg2
 from psycopg2 import extras, Error
@@ -10,7 +10,7 @@ import logging
 from dotenv import load_dotenv
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import datetime
 
 load_dotenv()
@@ -40,22 +40,10 @@ def split_message(text, max_length=4096):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(f"Hello, {message.from_user.first_name}")
-#
-# @dp.message(Command("login"))
-# async def login(message: types.Message):
-#     logging.info()(message.text)
-#     if message.text == PASSWORD:
-#         await storage.set_data(chat=message.chat.id, data={'id': message.from_user.id})
-#     else: await message.answer("Неверный пароль!")
-#
-# @dp.message(Command("check"))
-# async def chech(message: types.Message):
-#     data = storage.get_data(message.from_chat.id)
-#     if data is None:
-#         await message.answer("Ты не в аккаунте")
-#     else:
-#         await message.answer("Ты в аккаунте")
+    if str(message.from_user.id) in IDS:
+        await message.answer(f"Hello, {message.from_user.first_name}")
+    else: await message.answer("Вы не админ")
+
 
 def sql(query: str):
     try:
@@ -132,31 +120,62 @@ async def cmd_add_news(message: types.Message):
         global waiting_for_html
         waiting_for_html = True
         await message.reply("Отправьте файл HTML.")
+    else: await message.answer("Вы не админ")
+
+def add_news(html):
+    try:
+        pg = psycopg2.connect(f"""
+            host={HOST_PG}
+            dbname=postgres
+            user={USER_PG}
+            password={PASSWORD_PG}
+            port={PORT_PG}
+        """)
+
+        cursor = pg.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        cursor.execute(f"INSERT INTO news({uuid.uuid4().hex}, {html}, {datetime.now() + timedelta(days=7)}, {[]})")
+
+        pg.commit()
+
+        return_data = "Ok"
+
+    except (Exception, Error) as error:
+        logging.error(f'DB: ', error)
+
+        return_data = f"Error: {Error}"
+
+    finally:
+        if pg:
+            cursor.close()
+            pg.close()
+            logging.info("Соединение с PostgreSQL закрыто")
+            return return_data
 
 
-dp.message(F.content_type == types.ContentType.DOCUMENT)
+@dp.message(F.document)
 async def handle_document(message: types.Message):
-    global waiting_for_html
-    if waiting_for_html:
-        document = message.document
-        if document.mime_type == 'text/html':
-            # Получаем файл через get_file
-            file_info = await bot.get_file(document.file_id)
+    if str(message.from_user.id) in IDS:
+        global waiting_for_html
+        if waiting_for_html:
+            document = message.document
+            if document.mime_type == 'text/html':
+                file_info = await bot.get_file(document.file_id)
+                file_url = f'https://api.telegram.org/file/bot{bot.token}/{file_info.file_path}'
 
-            # Загружаем файл по URL
-            file_url = f'https://api.telegram.org/file/bot{bot.token}/{file_info.file_path}'
-            async with bot.session.get(file_url) as response:
-                if response.status == 200:
-                    content = await response.read()  # Читаем содержимое файла
-                    logging.info(content)  # вывод содержимого в консоль
-                    await message.reply("Файл успешно загружен и содержимое выведено в консоль.")
-                else:
-                    await message.reply("Не удалось загрузить файл.")
-
-        else:
-            await message.reply("Формат файла неправильный. Пожалуйста, отправьте HTML файл.")
-
-        waiting_for_html = False  # С
+                async with aiohttp.ClientSession() as session:  # Используем aiohttp для запросов
+                    async with session.get(file_url) as response:
+                        if response.status == 200:
+                            content = await response.read()
+                            reiz = add_news(content)
+                            logging.info(reiz)
+                            await message.reply(reiz)
+                        else:
+                            await message.reply("Не удалось загрузить файл.")
+            else:
+                await message.reply("Формат файла неправильный. Пожалуйста, отправьте HTML файл.")
+        waiting_for_html = False
+    else: await message.answer("Вы не админ")
 
 
 async def main():
